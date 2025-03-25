@@ -1,18 +1,22 @@
+import csv
+import json
+import os
+from datetime import datetime
+
 import requests
 from bs4 import BeautifulSoup
-import csv
-from datetime import datetime
-import time
-import os
-
 from dotenv import load_dotenv
 
 load_dotenv()
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
+# INFO_SLACK_URL = os.getenv("INFO_SLACK_URL")
+
+LAB_SLACK_URL = os.getenv("LAB_SLACK_URL")
+SIC_SLACK_URL = os.getenv("SIC_SLACK_URL")
 csv_links = {'INFOCOM': '/home/suhohan/SSU_notice_alert/database/notified_posts_infocom.csv',
              'INFOCOM_GRAD': '/home/suhohan/SSU_notice_alert/database/notified_posts_infocom_grad.csv',
              'SCATCH': '/home/suhohan/SSU_notice_alert/database/notified_posts_scatch.csv',
-             'DISU': '/home/suhohan/SSU_notice_alert/database/notified_posts_disu.csv', }
+             'DISU': '/home/suhohan/SSU_notice_alert/database/notified_posts_disu.csv',
+             'GRAD': '/home/suhohan/SSU_notice_alert/database/notified_posts_grad.csv', }
 
 
 def check_new_posts_infocom():
@@ -97,8 +101,35 @@ def check_new_posts_disu():
     return new_posts
 
 
-def send_slack_message(attachments):
-    response = requests.post(SLACK_WEBHOOK_URL, json={"attachments": attachments})
+def check_new_posts_grad():
+    base_url = 'https://grad.ssu.ac.kr/%ec%a0%95%eb%b3%b4%ea%b4%91%ec%9e%a5/%ea%b3%b5%ec%a7%80%ec%82%ac%ed%95%ad/'
+
+    new_posts = []
+
+    response = requests.get(base_url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    posts = soup.select('body > div.container.ssu05_bg01 > div > section > div.sub_wrap > div.table_wrap.baord_table > table > tbody > tr')
+    for post in posts:
+        title_td = post.select_one('td.title')
+        if title_td:
+            a_tag = title_td.find('a')
+            title = a_tag.text.strip() if a_tag else ""
+            link = a_tag['href'] if a_tag else ""
+            full_link = link if link.startswith('http') else f'https://grad.ssu.ac.kr{link}'
+            new_posts.append({'title': title, 'link': full_link})
+
+    return new_posts
+
+
+def send_slack_message(attachments, url):
+    response = requests.post(url, json={"attachments": attachments})
+    if response.status_code != 200:
+        raise ValueError(f'Request to Slack returned an error {response.status_code}, the response is: {response.text}')
+
+
+def send_slack_message_new(attachments, url):
+    response = requests.post(url, headers={"Content-Type": "application/json"}, data=json.dumps({"attachments": attachments}))
     if response.status_code != 200:
         raise ValueError(f'Request to Slack returned an error {response.status_code}, the response is: {response.text}')
 
@@ -139,21 +170,41 @@ def notify_new_posts(new_posts, source, csv_file, color):
 
 
 if __name__ == "__main__":
-    attachments = []
-    attachments.extend(notify_new_posts(check_new_posts_infocom(), "전자정보공학부 학사", 'INFOCOM', '#941b22'))
-    attachments.extend(notify_new_posts(check_new_posts_infocom_grad(), "전자정보공학부 대학원", 'INFOCOM_GRAD', '#941b22'))
-    attachments.extend(notify_new_posts(check_new_posts_scatch(), "SSU:catch", 'SCATCH', '#016694'))
-    attachments.extend(notify_new_posts(check_new_posts_disu(), "차세대반도체학과", 'DISU', '#2596be'))
+    '''4ILAB'''
+    attachments_4ILAB = []
+    infocom = notify_new_posts(check_new_posts_infocom(), "전자정보공학부 학사", 'INFOCOM', '#941b22')
+    infocom_grad = notify_new_posts(check_new_posts_infocom_grad(), "전자정보공학부 대학원", 'INFOCOM_GRAD', '#941b22')
+    scatch = notify_new_posts(check_new_posts_scatch(), "SSU:catch", 'SCATCH', '#016694')
+    disu = notify_new_posts(check_new_posts_disu(), "차세대반도체학과", 'DISU', '#2596be')
+    normal_grad = notify_new_posts(check_new_posts_grad(), "숭실대학교 일반대학원", 'GRAD', '#7fd4de')
 
-    if attachments:
-        send_slack_message(attachments)
+    for attachment in [infocom, infocom_grad, disu, scatch, normal_grad]:
+        attachments_4ILAB.extend(attachment)
+
+    if attachments_4ILAB:
+        send_slack_message(attachments_4ILAB, LAB_SLACK_URL)
     else:
-        send_slack_message([{
+        empty_attachments = [{
             "fallback": "새로운 공지사항이 없습니다.",
             "color": '#aaaaaa',
             "title": "공지사항",
             "text": "새로운 공지사항이 없습니다.",
             "ts": datetime.now().timestamp()
-        }])
+        }]
+        send_slack_message(empty_attachments, LAB_SLACK_URL)
 
     print(f"Checked for new posts at {datetime.now()}")
+
+    '''SIC'''
+    attachments = scatch
+    if attachments:
+        send_slack_message_new(attachments, SIC_SLACK_URL)
+    else:
+        empty_attachments = [{
+            "fallback": "새로운 공지사항이 없습니다.",
+            "color": '#aaaaaa',
+            "title": "공지사항",
+            "text": "새로운 공지사항이 없습니다.",
+            "ts": datetime.now().timestamp()
+        }]
+        send_slack_message(empty_attachments, SIC_SLACK_URL)
